@@ -108,6 +108,24 @@ pub enum Framer {
     Boxed(BoxedFramer),
 }
 
+impl From<CharacterDelimitedEncoder> for Framer {
+    fn from(framer: CharacterDelimitedEncoder) -> Self {
+        Self::CharacterDelimited(framer)
+    }
+}
+
+impl From<NewlineDelimitedEncoder> for Framer {
+    fn from(framer: NewlineDelimitedEncoder) -> Self {
+        Self::NewlineDelimited(framer)
+    }
+}
+
+impl From<BoxedFramer> for Framer {
+    fn from(framer: BoxedFramer) -> Self {
+        Self::Boxed(framer)
+    }
+}
+
 impl tokio_util::codec::Encoder<()> for Framer {
     type Error = BoxedFramingError;
 
