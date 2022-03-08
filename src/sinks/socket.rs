@@ -1,6 +1,4 @@
-use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::Encoder;
 
 #[cfg(unix)]
 use crate::sinks::util::unix::UnixSinkConfig;
@@ -96,20 +94,11 @@ impl SinkConfig for SocketSinkConfig {
         let (framer, serializer) = encoding.encoding();
         let framer = framer.unwrap_or_else(|| NewlineDelimitedEncoder::new().into());
         let encoder = encoding::Encoder::new(framer, serializer);
-        let encode_event = move |mut event| {
-            transformer.transform(&mut event);
-            let mut encoder = encoder.clone();
-            let mut buffer = BytesMut::new();
-            encoder
-                .encode(event, &mut buffer)
-                .ok()
-                .map(|_| buffer.freeze())
-        };
         match &self.mode {
-            Mode::Tcp(config) => config.build(cx, encode_event),
-            Mode::Udp(config) => config.build(cx, encode_event),
+            Mode::Tcp(config) => config.build(cx, transformer, encoder),
+            Mode::Udp(config) => config.build(cx, transformer, encoder),
             #[cfg(unix)]
-            Mode::Unix(config) => config.build(cx, encode_event),
+            Mode::Unix(config) => config.build(cx, transformer, encoder),
         }
     }
 

@@ -219,12 +219,13 @@ mod test {
         thread,
     };
 
-    use bytes::Bytes;
+    use bytes::{BufMut, Bytes, BytesMut};
     use futures::{stream, StreamExt};
     use tokio::{
         task::JoinHandle,
         time::{Duration, Instant},
     };
+    use tokio_util::codec::Encoder;
     #[cfg(unix)]
     use {
         super::{unix::UnixConfig, Mode},
@@ -240,7 +241,10 @@ mod test {
 
     use super::{tcp::TcpConfig, udp::UdpConfig, SocketConfig};
     use crate::{
-        codecs::NewlineDelimitedDecoderConfig,
+        codecs::{
+            encoding::{self, NewlineDelimitedEncoder},
+            NewlineDelimitedDecoderConfig,
+        },
         config::{
             log_schema, ComponentKey, GlobalOptions, SinkContext, SourceConfig, SourceContext,
         },
@@ -522,12 +526,29 @@ mod test {
         wait_for_tcp(addr).await;
 
         let message = random_string(512);
-        let message_bytes = Bytes::from(message.clone() + "\n");
+        let message_bytes = Bytes::from(message.clone());
 
         let cx = SinkContext::new_test();
-        let encode_event = move |_event| Some(message_bytes.clone());
+        let framer = NewlineDelimitedEncoder::new().into();
+        #[derive(Clone, Debug)]
+        struct Serializer {
+            bytes: Bytes,
+        }
+        impl Encoder<Event> for Serializer {
+            type Error = crate::Error;
+
+            fn encode(&mut self, _: Event, buffer: &mut BytesMut) -> Result<(), Self::Error> {
+                buffer.put(self.bytes.as_ref());
+                Ok(())
+            }
+        }
+        let serializer = (Box::new(Serializer {
+            bytes: message_bytes,
+        }) as encoding::BoxedSerializer)
+            .into();
+        let encoder = encoding::Encoder::new(framer, serializer);
         let sink_config = TcpSinkConfig::from_address(format!("localhost:{}", addr.port()));
-        let (sink, _healthcheck) = sink_config.build(cx, encode_event).unwrap();
+        let (sink, _healthcheck) = sink_config.build(cx, Default::default(), encoder).unwrap();
 
         // Spawn future that keeps sending lines to the TCP source forever.
         tokio::spawn(async move {
