@@ -241,10 +241,7 @@ mod test {
 
     use super::{tcp::TcpConfig, udp::UdpConfig, SocketConfig};
     use crate::{
-        codecs::{
-            encoding::{self, NewlineDelimitedEncoder},
-            NewlineDelimitedDecoderConfig,
-        },
+        codecs::{encoding, NewlineDelimitedDecoderConfig},
         config::{
             log_schema, ComponentKey, GlobalOptions, SinkContext, SourceConfig, SourceContext,
         },
@@ -529,25 +526,23 @@ mod test {
         let message_bytes = Bytes::from(message.clone());
 
         let cx = SinkContext::new_test();
-        let framer = NewlineDelimitedEncoder::new().into();
         #[derive(Clone, Debug)]
         struct Serializer {
             bytes: Bytes,
         }
         impl Encoder<Event> for Serializer {
-            type Error = crate::Error;
+            type Error = encoding::Error;
 
             fn encode(&mut self, _: Event, buffer: &mut BytesMut) -> Result<(), Self::Error> {
                 buffer.put(self.bytes.as_ref());
+                buffer.put_u8(b'\n');
                 Ok(())
             }
         }
-        let serializer = (Box::new(Serializer {
-            bytes: message_bytes,
-        }) as encoding::BoxedSerializer)
-            .into();
-        let encoder = encoding::Encoder::new(framer, serializer);
         let sink_config = TcpSinkConfig::from_address(format!("localhost:{}", addr.port()));
+        let encoder = Serializer {
+            bytes: message_bytes,
+        };
         let (sink, _healthcheck) = sink_config.build(cx, Default::default(), encoder).unwrap();
 
         // Spawn future that keeps sending lines to the TCP source forever.

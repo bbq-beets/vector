@@ -90,7 +90,7 @@ impl TcpSinkConfig {
         &self,
         cx: SinkContext,
         transformer: Transformer,
-        encoder: encoding::Encoder,
+        encoder: impl Encoder<Event, Error = encoding::Error> + Clone + Send + Sync + 'static,
     ) -> crate::Result<(VectorSink, Healthcheck)> {
         let uri = self.address.parse::<http::Uri>()?;
         let host = uri.host().ok_or(SinkBuildError::MissingHost)?.to_string();
@@ -197,20 +197,21 @@ impl TcpConnector {
     }
 }
 
-struct TcpSink {
+struct TcpSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync,
+{
     connector: TcpConnector,
     acker: Acker,
     transformer: Transformer,
-    encoder: encoding::Encoder,
+    encoder: E,
 }
 
-impl TcpSink {
-    fn new(
-        connector: TcpConnector,
-        acker: Acker,
-        transformer: Transformer,
-        encoder: encoding::Encoder,
-    ) -> Self {
+impl<E> TcpSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync + 'static,
+{
+    fn new(connector: TcpConnector, acker: Acker, transformer: Transformer, encoder: E) -> Self {
         Self {
             connector,
             acker,
@@ -255,7 +256,10 @@ impl TcpSink {
 }
 
 #[async_trait]
-impl StreamSink<Event> for TcpSink {
+impl<E> StreamSink<Event> for TcpSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync + Sync + 'static,
+{
     async fn run(self: Box<Self>, input: BoxStream<'_, Event>) -> Result<(), ()> {
         // We need [Peekable](https://docs.rs/futures/0.3.6/futures/stream/struct.Peekable.html) for initiating
         // connection only when we have something to send.

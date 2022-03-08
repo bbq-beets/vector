@@ -1,8 +1,10 @@
-use bytes::Bytes;
+use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use syslog::{Facility, Formatter3164, LogFormat, Severity};
+use tokio_util::codec::Encoder;
 
 use crate::{
+    codecs::encoding,
     config::{
         log_schema, AcknowledgementsConfig, GenerateConfig, Input, SinkConfig, SinkContext,
         SinkDescription,
@@ -72,9 +74,15 @@ impl SinkConfig for PapertrailConfig {
 
         let sink_config = TcpSinkConfig::new(address, self.keepalive, tls, self.send_buffer_bytes);
 
-        sink_config.build(cx, move |event| {
-            Some(encode_event(event, pid, &process, &encoding))
-        })
+        sink_config.build(
+            cx,
+            Default::default(),
+            PapertrailEncoder {
+                pid,
+                process,
+                encoding,
+            },
+        )
     }
 
     fn input(&self) -> Input {
@@ -90,59 +98,67 @@ impl SinkConfig for PapertrailConfig {
     }
 }
 
-fn encode_event(
-    mut event: Event,
+#[derive(Clone)]
+struct PapertrailEncoder {
     pid: u32,
-    process: &Option<Template>,
-    encoding: &EncodingConfig<Encoding>,
-) -> Bytes {
-    let host = event
-        .as_mut_log()
-        .remove(log_schema().host_key())
-        .map(|host| host.to_string_lossy());
+    process: Option<Template>,
+    encoding: EncodingConfig<Encoding>,
+}
 
-    let process = process
-        .as_ref()
-        .and_then(|t| {
-            t.render_string(&event)
-                .map_err(|error| {
-                    emit!(&TemplateRenderingError {
-                        error,
-                        field: Some("process"),
-                        drop_event: false,
+impl Encoder<Event> for PapertrailEncoder {
+    type Error = encoding::Error;
+
+    fn encode(&mut self, mut event: Event, bytes: &mut BytesMut) -> Result<(), Self::Error> {
+        let host = event
+            .as_mut_log()
+            .remove(log_schema().host_key())
+            .map(|host| host.to_string_lossy());
+
+        let process = self
+            .process
+            .as_ref()
+            .and_then(|t| {
+                t.render_string(&event)
+                    .map_err(|error| {
+                        emit!(&TemplateRenderingError {
+                            error,
+                            field: Some("process"),
+                            drop_event: false,
+                        })
                     })
-                })
-                .ok()
-        })
-        .unwrap_or_else(|| String::from("vector"));
+                    .ok()
+            })
+            .unwrap_or_else(|| String::from("vector"));
 
-    let formatter = Formatter3164 {
-        facility: Facility::LOG_USER,
-        hostname: host,
-        process,
-        pid,
-    };
+        let formatter = Formatter3164 {
+            facility: Facility::LOG_USER,
+            hostname: host,
+            process,
+            pid: self.pid,
+        };
 
-    let mut s: Vec<u8> = Vec::new();
+        let mut s: Vec<u8> = Vec::new();
 
-    encoding.apply_rules(&mut event);
-    let log = event.into_log();
+        self.encoding.apply_rules(&mut event);
+        let log = event.into_log();
 
-    let message = match encoding.codec() {
-        Encoding::Json => serde_json::to_string(&log).unwrap(),
-        Encoding::Text => log
-            .get(log_schema().message_key())
-            .map(|v| v.to_string_lossy())
-            .unwrap_or_default(),
-    };
+        let message = match self.encoding.codec() {
+            Encoding::Json => serde_json::to_string(&log).unwrap(),
+            Encoding::Text => log
+                .get(log_schema().message_key())
+                .map(|v| v.to_string_lossy())
+                .unwrap_or_default(),
+        };
 
-    formatter
-        .format(&mut s, Severity::LOG_INFO, message)
-        .unwrap();
+        formatter
+            .format(&mut s, Severity::LOG_INFO, message)
+            .unwrap();
 
-    s.push(b'\n');
+        bytes.put(s.as_ref());
+        bytes.put_u8(b'\n');
 
-    Bytes::from(s)
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -162,18 +178,21 @@ mod tests {
         evt.as_mut_log().insert("magic", "key");
         evt.as_mut_log().insert("process", "foo");
 
-        let bytes = encode_event(
-            evt,
-            0,
-            &Some(Template::try_from("{{ process }}").unwrap()),
-            &EncodingConfig {
+        let mut encoder = PapertrailEncoder {
+            pid: 0,
+            process: Some(Template::try_from("{{ process }}").unwrap()),
+            encoding: EncodingConfig {
                 codec: Encoding::Json,
                 schema: None,
                 only_fields: None,
                 except_fields: Some(vec!["magic".into()]),
                 timestamp_format: None,
             },
-        );
+        };
+
+        let mut bytes = BytesMut::new();
+        encoder.encode(evt, &mut bytes).unwrap();
+        let bytes = bytes.freeze();
 
         let msg =
             bytes.slice(String::from_utf8_lossy(&bytes).find(": ").unwrap() + 2..bytes.len() - 1);

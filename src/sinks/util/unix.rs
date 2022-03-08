@@ -49,7 +49,7 @@ impl UnixSinkConfig {
         &self,
         cx: SinkContext,
         transformer: Transformer,
-        encoder: encoding::Encoder,
+        encoder: impl Encoder<Event, Error = encoding::Error> + Clone + Send + Sync + 'static,
     ) -> crate::Result<(VectorSink, Healthcheck)> {
         let connector = UnixConnector::new(self.path.clone());
         let sink = UnixSink::new(connector.clone(), cx.acker(), transformer, encoder);
@@ -105,19 +105,25 @@ impl UnixConnector {
     }
 }
 
-struct UnixSink {
+struct UnixSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync,
+{
     connector: UnixConnector,
     acker: Acker,
     transformer: Transformer,
-    encoder: encoding::Encoder,
+    encoder: E,
 }
 
-impl UnixSink {
+impl<E> UnixSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync,
+{
     pub fn new(
         connector: UnixConnector,
         acker: Acker,
         transformer: Transformer,
-        encoder: encoding::Encoder,
+        encoder: E,
     ) -> Self {
         Self {
             connector,
@@ -139,7 +145,10 @@ impl UnixSink {
 }
 
 #[async_trait]
-impl StreamSink<Event> for UnixSink {
+impl<E> StreamSink<Event> for UnixSink<E>
+where
+    E: Encoder<Event, Error = encoding::Error> + Clone + Send + Sync,
+{
     // Same as TcpSink, more details there.
     async fn run(mut self: Box<Self>, input: BoxStream<'_, Event>) -> Result<(), ()> {
         let mut encoder = self.encoder.clone();
@@ -206,7 +215,7 @@ mod tests {
             .build(
                 SinkContext::new_test(),
                 Default::default(),
-                Default::default()
+                encoding::Encoder::default()
             )
             .unwrap()
             .1
@@ -218,7 +227,7 @@ mod tests {
             .build(
                 SinkContext::new_test(),
                 Default::default(),
-                Default::default()
+                encoding::Encoder::default()
             )
             .unwrap()
             .1
@@ -238,7 +247,7 @@ mod tests {
         let config = UnixSinkConfig::new(out_path);
         let cx = SinkContext::new_test();
         let (sink, _healthcheck) = config
-            .build(cx, Default::default(), Default::default())
+            .build(cx, Default::default(), encoding::Encoder::default())
             .unwrap();
 
         // Send the test data
