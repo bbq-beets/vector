@@ -8,12 +8,16 @@ on:
   pull_request:
     paths:
       - 'lib/soak'
+      - 'soaks/Dockerfile'
+      - 'soaks/Dockerfile.builder'
       - '.github/workflows/soak_infra.yml'
   push:
     branches:
       - master
     paths:
       - 'lib/soak'
+      - 'soaks/Dockerfile'
+      - 'soaks/Dockerfile.builder'
       - '.github/workflows/soak_infra.yml'
 
 jobs:
