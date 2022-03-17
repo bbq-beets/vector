@@ -33,7 +33,7 @@ jobs:
 
   soak-builder:
     name: Build and push 'soak-builder' to Github CR
-    runs-on: [linux, soak, soak-builder]
+    runs-on: ubuntu-20.04
     steps:
       - name: Check out the repo
         uses: actions/checkout@v3
