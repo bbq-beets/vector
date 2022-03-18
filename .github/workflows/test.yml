@@ -9,8 +9,6 @@ jobs:
   check-component-features:
     name: Component Features - Linux
     runs-on: [linux, test-runner]
-    needs: changes
-    if: ${{ needs.changes.outputs.source == 'true' }}
     steps:
       - uses: actions/checkout@v3
       - run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
