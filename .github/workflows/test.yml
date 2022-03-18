@@ -8,7 +8,7 @@ on:
 jobs:
   check-component-features:
     name: Component Features - Linux
-    runs-on: [linux, test-runner]
+    runs-on: helloworld-runner
     steps:
       - uses: actions/checkout@v3
       - run: sudo -E bash scripts/environment/bootstrap-ubuntu-20.04.sh
